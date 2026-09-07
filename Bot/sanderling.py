@@ -211,7 +211,7 @@ def find_asteroids(
 
 
 def get_pid_by_hwnd(hwnd: int) -> int:
-    if platform.system() != "Windows":
+    if sys.platform != "win32":
         raise MemoryReadError("Sanderling mode requires Windows")
     pid = wintypes.DWORD()
     ctypes.windll.user32.GetWindowThreadProcessId(
@@ -223,6 +223,8 @@ def get_pid_by_hwnd(hwnd: int) -> int:
 
 
 def client_origin(hwnd: int) -> Position:
+    if sys.platform != "win32":
+        raise MemoryReadError("Sanderling mode requires Windows")
     point = wintypes.POINT(0, 0)
     if not ctypes.windll.user32.ClientToScreen(
         wintypes.HWND(hwnd), ctypes.byref(point)
