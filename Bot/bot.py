@@ -1,20 +1,19 @@
 import os
 import platform
-import random
 import re
 import sys
 import threading
-import time
 import tkinter as tk
 import tkinter.font as tkFont
 from datetime import datetime
-from typing import Any, List
+from typing import Any, Callable, List
 
 import pyautogui
 from loguru import logger
 
 from Bot import config as cfg
 from Bot import functions as fe
+from Bot import sanderling as sm
 
 config = cfg.ConfigHandler("config.properties")  # type: ignore
 
@@ -55,6 +54,8 @@ LONG_SLEEP = 100
 # globals (just for reference, not actually needed)
 
 stop_flag = False
+panic_requested = False
+run_active = False
 selected_eve_window: Any = None
 
 # Mining functions
@@ -84,7 +85,7 @@ def get_cargo_loading_time(mining_hold: int, mining_yield: float) -> float:
 # Create Tkinter window
 root = tk.Tk()
 root.wm_attributes("-topmost", 1)
-root.title("Mining Bot Owl-Edition")
+root.title("Mining Bot Owl-Edition - " + config.get_automation_mode())
 screen_width = root.winfo_screenwidth()
 screen_height = root.winfo_screenheight()
 window_width = 480
@@ -111,12 +112,12 @@ button_frame.pack(pady=10)
 #########################################################
 
 
-def get_windows_with_title(title) -> List[Any]:
+def get_windows_with_title(title: str) -> List[Any]:
     if platform.system() == "Windows":
         # since there is not types for this libary, we ignore the types
         import pygetwindow as gw  # type: ignore
 
-        return gw.getWindowsWithTitle(title)
+        return list(gw.getWindowsWithTitle(title))
     else:
         return []
 
@@ -169,7 +170,10 @@ def update_option_menu(selection: str) -> None:
 
 
 window_select = tk.OptionMenu(
-    input_frame, eve_window, *window_titles, command=on_window_select
+    input_frame,
+    eve_window,
+    *window_titles,
+    command=lambda selection: on_window_select(str(selection)),
 )
 update_option_menu(eve_window.get())  # Update initial text
 eve_window.trace_add(
@@ -197,7 +201,7 @@ entry_label.grid(row=1, column=0, sticky="w")
 entry_var = tk.StringVar()
 entry = tk.Entry(input_frame, textvariable=entry_var)
 entry.grid(row=1, column=1, padx=5, pady=4, sticky="w")
-entry.insert(tk.END, config.get_mining_runs())
+entry.insert(tk.END, str(config.get_mining_runs()))
 
 # Mining Hold
 #########################################################
@@ -208,7 +212,7 @@ mining_hold_label = tk.Label(input_frame, text="Mining Hold (m3):")
 mining_hold_label.grid(row=2, column=0, sticky="w")
 mining_hold_entry = tk.Entry(input_frame, textvariable=mining_hold_var)
 mining_hold_entry.grid(row=2, column=1, padx=5, pady=4, sticky="w")
-mining_hold_entry.insert(tk.END, config.get_mining_hold())
+mining_hold_entry.insert(tk.END, str(config.get_mining_hold()))
 
 # Mining Yield
 #########################################################
@@ -219,7 +223,7 @@ mining_yield_label = tk.Label(input_frame, text="Mining Yield (m3/s):")
 mining_yield_label.grid(row=3, column=0, sticky="w")
 mining_yield_entry = tk.Entry(input_frame, textvariable=mining_yield_var)
 mining_yield_entry.grid(row=3, column=1, padx=5, pady=4, sticky="w")
-mining_yield_entry.insert(tk.END, config.get_mining_yield())
+mining_yield_entry.insert(tk.END, str(config.get_mining_yield()))
 
 # Undock
 #########################################################
@@ -232,12 +236,13 @@ undock_coo_entry.grid(row=4, column=1, padx=5, pady=4, sticky="w")
 undock_coo_entry.insert(tk.END, format_coo(config.get_undock_coo()))
 
 
-def test_undock():
+def test_undock() -> None:
     save_properties()
-    pyautogui.moveTo(*config.get_undock_coo())
+    x, y = config.get_undock_coo()
+    pyautogui.moveTo(x, y)
 
 
-undock_test_button = tk.Button(
+undock_test_button: tk.Button = tk.Button(
     input_frame,
     text="Test",
     command=lambda: execute_and_enable(undock_test_button, test_undock),
@@ -257,11 +262,11 @@ clear_cargo_coo_entry.insert(tk.END, format_coo(config.get_clear_cargo_coo()))
 # check if the coordinate is set correctly
 
 
-def execute_and_enable(button, func):
+def execute_and_enable(button: tk.Button, func: Callable[[], None]) -> None:
     # Disable the button to prevent further clicks.
     button.config(state=tk.DISABLED)
 
-    def execute_function():
+    def execute_function() -> None:
         func()
 
         # Enable the button after the function completes.
@@ -272,12 +277,12 @@ def execute_and_enable(button, func):
     thread.start()
 
 
-def test_clear_cargo():
+def test_clear_cargo() -> None:
     save_properties()
     fe.clear_cargo(*config.get_clear_cargo_coo())
 
 
-clear_cargo_check_button = tk.Button(
+clear_cargo_check_button: tk.Button = tk.Button(
     input_frame,
     text="Test",
     compound="left",
@@ -296,12 +301,13 @@ target_one_coo_entry.grid(row=6, column=1, padx=5, pady=4, sticky="w")
 target_one_coo_entry.insert(tk.END, format_coo(config.get_target_one_coo()))
 
 
-def test_target_one():
+def test_target_one() -> None:
     save_properties()
-    pyautogui.moveTo(*config.get_target_one_coo())
+    x, y = config.get_target_one_coo()
+    pyautogui.moveTo(x, y)
 
 
-target_one_coo_test_button = tk.Button(
+target_one_coo_test_button: tk.Button = tk.Button(
     input_frame,
     text="Test",
     command=lambda: execute_and_enable(
@@ -322,16 +328,17 @@ target_two_coo_entry.grid(row=7, column=1, padx=5, pady=4, sticky="w")
 target_two_coo_entry.insert(tk.END, format_coo(config.get_target_two_coo()))
 
 
-def test_target_two():
+def test_target_two() -> None:
     save_properties()
-    pyautogui.moveTo(*config.get_target_two_coo())
+    x, y = config.get_target_two_coo()
+    pyautogui.moveTo(x, y)
 
 
-target_two_coo_test_button = tk.Button(
+target_two_coo_test_button: tk.Button = tk.Button(
     input_frame,
     text="Test",
     command=lambda: execute_and_enable(
-        target_one_coo_test_button,
+        target_two_coo_test_button,
         test_target_two,
     ),
 )
@@ -348,16 +355,17 @@ mouse_reset_coo_entry.grid(row=8, column=1, padx=5, pady=4, sticky="w")
 mouse_reset_coo_entry.insert(tk.END, format_coo(config.get_mouse_reset_coo()))
 
 
-def test_mouse_reset():
+def test_mouse_reset() -> None:
     save_properties()
-    pyautogui.moveTo(*config.get_mouse_reset_coo())
+    x, y = config.get_mouse_reset_coo()
+    pyautogui.moveTo(x, y)
 
 
-mouse_reset_coo_test_button = tk.Button(
+mouse_reset_coo_test_button: tk.Button = tk.Button(
     input_frame,
     text="Test",
     command=lambda: execute_and_enable(
-        target_one_coo_test_button,
+        mouse_reset_coo_test_button,
         test_mouse_reset,
     ),
 )
@@ -374,16 +382,17 @@ home_coo_entry.grid(row=9, column=1, padx=5, pady=4, sticky="w")
 home_coo_entry.insert(tk.END, format_coo(config.get_home_coo()))
 
 
-def test_warp_to():
+def test_warp_to() -> None:
     save_properties()
-    pyautogui.moveTo(*config.get_home_coo())
+    x, y = config.get_home_coo()
+    pyautogui.moveTo(x, y)
 
 
-home_coo_test_button = tk.Button(
+home_coo_test_button: tk.Button = tk.Button(
     input_frame,
     text="Test",
     command=lambda: execute_and_enable(
-        target_one_coo_test_button,
+        home_coo_test_button,
         test_warp_to,
     ),
 )
@@ -420,7 +429,7 @@ save_button.grid(row=0, column=3, padx=(20, 0), pady=10, ipadx=5)
 ########################################################
 
 
-def insert_mouse_position(event) -> None:
+def insert_mouse_position(event: tk.Event[Any]) -> None:
     x, y = pyautogui.position()
     if isinstance(event.widget, tk.Text):
         event.widget.insert(tk.END, f"\n{x}, {y}")
@@ -446,13 +455,10 @@ def update_mouse_position() -> None:
 # Start update mouse position
 update_mouse_position()
 
-# icon_bitmap
-root.iconbitmap("")
-
 root.bind("<Control-i>", insert_mouse_position)
 
 
-def update_estimated_run_time(*args) -> None:
+def update_estimated_run_time(*args: Any) -> None:
     config.set_mining_runs(entry_var.get())
     config.set_mining_hold(mining_hold_var.get())
     config.set_mining_yield(mining_yield_var.get())
@@ -484,7 +490,7 @@ update_estimated_run_time()
 
 
 # label for completed/remaining mining runs
-def update_mining_runs(actual: int, wanted: int):
+def update_mining_runs(actual: int, wanted: int) -> None:
     mining_runs_result.config(text=f"Completed runs: {actual}/{wanted}")
 
 
@@ -508,6 +514,10 @@ fe.update_timer(next_reset_label, fe.NEXT_RESET_IN)
 
 
 def disable_fields() -> None:
+    window_select.config(state=tk.DISABLED)
+    for widget in input_frame.winfo_children():
+        if isinstance(widget, tk.Button):
+            widget.config(state=tk.DISABLED)
     # Disable input fields
     entry.config(state=tk.DISABLED)
     undock_coo_entry.config(state=tk.DISABLED)
@@ -532,6 +542,10 @@ def disable_fields() -> None:
 
 
 def enable_fields() -> None:
+    window_select.config(state=tk.NORMAL)
+    for widget in input_frame.winfo_children():
+        if isinstance(widget, tk.Button):
+            widget.config(state=tk.NORMAL)
     # Enable input fields
     entry.config(state=tk.NORMAL)
     undock_coo_entry.config(state=tk.NORMAL)
@@ -559,23 +573,52 @@ def stop_function() -> None:
     logger.warning("The mining script will end on next reset!")
 
 
+def create_memory_session() -> sm.Session | None:
+    if config.get_automation_mode() == "coordinates":
+        return None
+    if selected_eve_window is None:
+        raise sm.MemoryReadError("Select an EVE window before starting Sanderling")
+    return sm.Session(
+        selected_eve_window._hWnd,
+        config.get_home_bookmark_name(),
+        config.get_mining_bookmark_prefix(),
+        config.get_mining_range(),
+        config.get_asteroid_name_pattern(),
+        config.get_memory_read_timeout(),
+    )
+
+
 def panic_function() -> None:
-    logger.warning("Panic! Bring in drones and dock to station")
+    global panic_requested, stop_flag, run_active
+    panic_requested = True
+    stop_flag = True
     panic_button.config(state=tk.DISABLED)
+    logger.warning(
+        "Panic requested: recall drones and return home at the next action boundary"
+    )
+    if run_active:
+        return  # The mining worker owns input and performs the return itself.
+    run_active = True
+    disable_fields()
 
     def execute_function() -> None:
-        stop_function()
-        activate_eve_window()
-        x, y = config.get_mouse_reset_coo()
-        pyautogui.moveTo(x, y)
-        pyautogui.click(button="left")
-        fe.drone_in()
-        fe.sleep_and_log(1)
-        fe.auto_dock_to_station(config.get_home_coo())
-        os._exit(0)
+        global run_active
+        try:
+            session = create_memory_session()
+            activate_eve_window()
+            fe.drone_in()
+            coords = (
+                list(session.bookmark(home=True)) if session else config.get_home_coo()
+            )
+            fe.auto_dock_to_station(coords)
+        except Exception:
+            logger.exception("Panic return failed; manual control is required")
+        finally:
+            run_active = False
+            root.after(0, enable_fields)
+            root.after(0, lambda: panic_button.config(state=tk.NORMAL))
 
-    thread = threading.Thread(target=execute_function)
-    thread.start()
+    threading.Thread(target=execute_function, daemon=True).start()
 
 
 def save_properties() -> None:
@@ -592,78 +635,108 @@ def save_properties() -> None:
     config.save()
     logger.info("Configuration updated")
 
+
 def repeat_function(cargo_loading_time: float) -> None:
-    disable_fields()
+    global run_active
     actual_mining_runs = 0
     mining_runs = config.get_mining_runs()
-    update_mining_runs(actual_mining_runs, mining_runs)
-    logger.info(f"Loading eve memory...")
-    window_pid = fe.get_pid_by_hwnd(selected_eve_window._hWnd) if selected_eve_window else None
-    logger.info(f"Selected window pid: {window_pid}")
-    mem = fe.adjust_display_positions(fe.read_eve_process_memory(str(window_pid)))
-    logger.info(f"Eve memory loaded! Starting mining...")
-    while not stop_flag and actual_mining_runs < mining_runs:
-        activate_eve_window()
-        fe.set_next_reset(cargo_loading_time, fe.CARGO_LOAD_TIME)
-        loaded_in_str = fe.get_remaining_time(cargo_loading_time)
-        logger.info(f"The mining cargo is filled in about {loaded_in_str}")
-        time.sleep(1)
-        mem = fe.adjust_display_positions(fe.read_eve_process_memory(str(window_pid)))
-        undock_x, undock_y = fe.get_center_position(fe.find_undock_button(mem))
-        fe.undock(x=undock_x, y=undock_y)
-        fe.sleep_and_log(SMALL_SLEEP)
-        fe.set_hardener_online(config.get_hardener_keys())
-        bookmark_x, bookmark_y = fe.get_center_position(random.choice(fe.find_bookmarks(mem)[1:]))
-        fe.click_top_left_circle_menu(bookmark_x, bookmark_y)
-        fe.sleep_and_log(warping_time)
-        activate_eve_window()
-        rm_x, rm_y = config.get_mouse_reset_coo()
-        fe.drone_out(x=rm_x, y=rm_y)
-        # read memory again to get the new positions
-        mem = fe.adjust_display_positions(fe.read_eve_process_memory(str(window_pid)))
-        asteroids = fe.find_asteroids(mem)
-        # TODO fail if less than two asteroids close enough
-        tx1, ty1 = asteroids[0][2]
-        tx2, ty2 = asteroids[1][2]
-        fe.mining_behaviour(
-            tx1=tx1,
-            ty1=ty1,
-            tx2=tx2,
-            ty2=ty2,
-            mining_reset=config.get_mining_reset_timer(),
-            mining_loop=cargo_loading_time,
-            rm_x=rm_x,
-            rm_y=rm_y,
-            unlock_all_targets_keys=config.get_unlock_all_targets_key(),
-            activate_eve_window=activate_eve_window,
-            is_stopped=lambda: stop_flag,
-            auto_reset_miners=auto_reset_miners,
+    session: sm.Session | None = None
+    try:
+        session = create_memory_session()
+        if session:
+            activate_eve_window()
+            session.validate()
+        while not stop_flag and actual_mining_runs < mining_runs:
+            activate_eve_window()
+            fe.set_next_reset(cargo_loading_time, fe.CARGO_LOAD_TIME)
+            undock_x, undock_y = (
+                session.undock() if session else config.get_undock_coo()
+            )
+            if panic_requested:
+                break
+            fe.undock(x=undock_x, y=undock_y)
+            fe.sleep_and_log(SMALL_SLEEP)
+            if not panic_requested:
+                fe.set_hardener_online(config.get_hardener_keys())
+                item = (
+                    session.bookmark()
+                    if session
+                    else fe.get_random_coord(config.get_mining_coo())
+                )
+                if not panic_requested:
+                    fe.click_top_left_circle_menu(item[0], item[1])
+                    fe.sleep_and_log(warping_time)
+            activate_eve_window()
+            if not panic_requested:
+                rm_x, rm_y = config.get_mouse_reset_coo()
+                fe.drone_out(x=rm_x, y=rm_y)
+                # Sanderling refreshes before each targeting action; legacy mode uses configuration.
+                tx1, ty1 = (0, 0) if session else config.get_target_one_coo()
+                tx2, ty2 = (0, 0) if session else config.get_target_two_coo()
+                try:
+                    fe.mining_behaviour(
+                        tx1=tx1,
+                        ty1=ty1,
+                        tx2=tx2,
+                        ty2=ty2,
+                        mining_reset=config.get_mining_reset_timer(),
+                        mining_loop=cargo_loading_time,
+                        rm_x=rm_x,
+                        rm_y=rm_y,
+                        unlock_all_targets_keys=config.get_unlock_all_targets_key(),
+                        activate_eve_window=activate_eve_window,
+                        is_stopped=lambda: stop_flag,
+                        auto_reset_miners=auto_reset_miners,
+                        refresh_targets=session.targets if session else None,
+                        should_abort=lambda: panic_requested,
+                    )
+                except sm.MiningTargetsUnavailable as error:
+                    logger.warning(str(error))
+                    # End this run rather than repeatedly revisiting an unusable belt.
+                    break_after_docking = True
+                else:
+                    break_after_docking = False
+            else:
+                break_after_docking = True
+            activate_eve_window()
+            fe.drone_in()
+            fe.sleep_and_log(SMALL_SLEEP)
+            home = (
+                list(session.bookmark(home=True)) if session else config.get_home_coo()
+            )
+            fe.auto_dock_to_station(home)
+            fe.sleep_and_log(LONG_SLEEP)
+            activate_eve_window()
+            if session:
+                # Refuse to drag cargo if docking has not actually completed.
+                session.undock()
+            cg_x, cg_y = config.get_clear_cargo_coo()
+            fe.clear_cargo(x=cg_x, y=cg_y)
+            actual_mining_runs += 1
+            root.after(0, update_mining_runs, actual_mining_runs, mining_runs)
+            if take_screenshots:
+                img = pyautogui.screenshot()
+                now_str = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
+                img.save(f"eve_screenshot_{now_str}.png")
+            if break_after_docking or panic_requested:
+                break
+        logger.info(f"Completed {actual_mining_runs}/{mining_runs} mining sessions")
+    except Exception:
+        logger.exception(
+            "Bot stopped after an error; check EVE and take manual control if needed"
         )
-        activate_eve_window()
-        fe.drone_in()
-        fe.sleep_and_log(SMALL_SLEEP)
-        home_x, home_y = fe.get_center_position(fe.find_bookmarks(mem)[0])
-        fe.auto_dock_to_station([home_x, home_y])
-        # sleep long enough to be in station when program wakes up
-        fe.sleep_and_log(LONG_SLEEP)
-        # docking will take some time, need to refocus window
-        activate_eve_window()
-        cg_x, cg_y = config.get_clear_cargo_coo()
-        fe.clear_cargo(x=cg_x, y=cg_y)
-        actual_mining_runs += 1
-        update_mining_runs(actual_mining_runs, mining_runs)
-        if take_screenshots:
-            img = pyautogui.screenshot()
-            now_str = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
-            img.save(f"eve_screenshot_{now_str}.png")
-    total_runs_str = f"{actual_mining_runs}/{mining_runs}"
-    logger.info(f"Completed {total_runs_str} mining sessions")
-    enable_fields()
+    finally:
+        run_active = False
+        root.after(0, enable_fields)
+        root.after(0, lambda: panic_button.config(state=tk.NORMAL))
 
 
 def start_function() -> None:
-    global stop_flag
+    global stop_flag, panic_requested, run_active
+    if run_active:
+        return
     stop_flag = False
+    panic_requested = False
     save_properties()
     mining_runs = config.get_mining_runs()
     mining_hold_value = config.get_mining_hold()
@@ -679,6 +752,8 @@ def start_function() -> None:
     )
     estimated_run_time_str = fe.get_remaining_time(estimated_run_time)
     logger.info(f"Estimate for completion is {estimated_run_time_str}")
+    run_active = True
+    disable_fields()
     thread = threading.Thread(
         target=lambda: repeat_function(cargo_loading_time=cargo_loading_time)
     )

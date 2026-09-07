@@ -1,4 +1,14 @@
 [SETTINGS]
+# Sanderling is Windows-only; use coordinates for the legacy mode.
+automation_mode = sanderling
+# Keep these bookmarks visible in the EVE bookmark window.
+home_bookmark_name = Home
+mining_bookmark_prefix = Mining
+# Set this to your actual laser range, not targeting range.
+mining_range_m = 15000
+# English asteroid names only by default. Matches overview labels.
+asteroid_name_pattern = ^Asteroid\b
+memory_read_timeout = 120
 log_level = INFO
 mining_runs = 5
 mining_hold = 5000

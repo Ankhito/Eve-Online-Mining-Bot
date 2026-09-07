@@ -22,6 +22,37 @@ class ConfigHandler:
         self.config = configparser.ConfigParser()
         self.config.read(config_path)
 
+    def get_automation_mode(self) -> str:
+        mode = (
+            self.config.get("SETTINGS", "automation_mode", fallback="sanderling")
+            .strip()
+            .lower()
+        )
+        if mode not in {"sanderling", "coordinates"}:
+            raise ValueError("automation_mode must be sanderling or coordinates")
+        return mode
+
+    def get_home_bookmark_name(self) -> str:
+        return self.config.get(
+            "SETTINGS", "home_bookmark_name", fallback="Home"
+        ).strip()
+
+    def get_mining_bookmark_prefix(self) -> str:
+        return self.config.get(
+            "SETTINGS", "mining_bookmark_prefix", fallback="Mining"
+        ).strip()
+
+    def get_mining_range(self) -> float:
+        return self.config.getfloat("SETTINGS", "mining_range_m", fallback=15000)
+
+    def get_asteroid_name_pattern(self) -> str:
+        return self.config.get(
+            "SETTINGS", "asteroid_name_pattern", fallback=r"^Asteroid\b"
+        )
+
+    def get_memory_read_timeout(self) -> float:
+        return self.config.getfloat("SETTINGS", "memory_read_timeout", fallback=120)
+
     def get_log_level(self) -> str:
         return self._get_setting("log_level", self.config.get, "INFO")  # type: ignore
 
