@@ -4,7 +4,7 @@
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
+    binaries=[('read-memory-64-bit.exe', '.')],
     datas=[],
     hiddenimports=[],
     hookspath=[],

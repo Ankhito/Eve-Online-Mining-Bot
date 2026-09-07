@@ -1,7 +1,7 @@
 import random
 import time
 from tkinter import Label
-from typing import Callable, List
+from typing import Callable, List, Optional, Tuple
 
 import pyautogui
 from loguru import logger
@@ -16,7 +16,9 @@ last_selected_coord: List[int] = []
 def get_random_coord(coords: List[List[int]]) -> List[int]:
     global last_selected_coord
     available_coords = [coord for coord in coords if coord != last_selected_coord]
-    selected_coord = random.choice(available_coords)
+    if not coords:
+        raise ValueError("No mining coordinates configured")
+    selected_coord = random.choice(available_coords or coords)
     last_selected_coord = selected_coord
     return selected_coord
 
@@ -124,12 +126,20 @@ def mining_behaviour(
     activate_eve_window: Callable[[], None],
     is_stopped: Callable[[], bool],
     auto_reset_miners: bool,
+    refresh_targets: Optional[Callable[[], List[Tuple[int, int]]]] = None,
+    should_abort: Callable[[], bool] = lambda: False,
 ) -> None:
 
     # start time to counter looptime
     start_time = time.time()
+    if should_abort():
+        return
+    if refresh_targets is not None:
+        (tx1, ty1), (tx2, ty2) = refresh_targets()
 
     while True:
+        if should_abort():
+            return
         activate_eve_window()
         if unlock_all_targets_keys:
             # reset mouse assigned mining laser random in space
@@ -184,6 +194,13 @@ def mining_behaviour(
         # console
         logger.info("mining...")
 
+        if should_abort():
+            return
+        if refresh_targets is not None:
+            (tx1, ty1), (tx2, ty2) = refresh_targets()
+        if should_abort():
+            return
+
         # target 1
         pyautogui.moveTo(tx1, ty1)
         pyautogui.keyDown("ctrl")
@@ -208,7 +225,11 @@ def mining_behaviour(
 
         # reset every 170 seconds (depends on mining barge)
         set_next_reset(mining_reset, NEXT_RESET_IN)
-        sleep_and_log(mining_reset)
+        deadline = time.monotonic() + mining_reset + random.uniform(0, 1)
+        while time.monotonic() < deadline:
+            if should_abort():
+                return
+            time.sleep(min(0.2, max(0, deadline - time.monotonic())))
         logger.info("reset mining script...")
 
         elapsed_time = time.time() - start_time

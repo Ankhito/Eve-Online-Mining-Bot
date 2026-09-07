@@ -5,13 +5,70 @@ The Mining Bot Alpha Owl-Edition is a Python program developed to automate minin
 [![Video auf YouTube](https://img.youtube.com/vi/-qzjmKXXsqU/maxresdefault.jpg)](https://www.youtube.com/watch?v=-qzjmKXXsqU)
 [youtube link]
 
+## Sanderling mode (default)
+
+This fork incorporates upstream `sanderling` through `02ac17b` (May 28, 2024),
+with fixes for distance parsing, named bookmarks, fresh UI snapshots, and error handling.
+Use **Windows and Python 3.10 or newer** for this mode. The bundled
+`read-memory-64-bit.exe` comes unchanged from upstream; compatibility with the
+current EVE client still requires an in-game check.
+
+Before clicking Start:
+
+1. Dock your ship, use the English EVE UI, and select its window in the bot.
+2. Keep your bookmark list open. Name the station bookmark `Home` and your mining
+   bookmarks `Mining 1`, `Mining 2`, etc., or change the names below. Keep these
+   entries visible and give them unique names. The home bookmark must be a dockable station.
+3. Set `mining_range_m` to your fitted lasers' actual range. Configure the overview
+   to show asteroid names and distance. The default name filter matches English
+   `Asteroid ...` labels; adjust it to your visible labels if necessary. This is
+   label filtering, not verification of EVE object type IDs.
+4. Still configure cargo unloading and mouse-reset coordinates, mining hold/yield,
+   laser reset time, hardener keys and warp time. The legacy undock/target/bookmark
+   coordinate fields are ignored during normal Sanderling runs.
+
+```ini
+[SETTINGS]
+automation_mode = sanderling
+home_bookmark_name = Home
+mining_bookmark_prefix = Mining
+mining_range_m = 15000
+asteroid_name_pattern = ^Asteroid\b
+memory_read_timeout = 120
+```
+
+The bot reads the selected process only. It locates the undock button, chooses a
+named mining bookmark (avoiding the last one when alternatives exist), and selects
+the two nearest matching overview entries within range. Snapshots refresh before
+bookmark actions and each targeting cycle. Window client coordinates are translated
+to screen coordinates; unusual EVE UI scaling or mixed-monitor DPI still needs live
+validation. Keep the EVE window visible and unobstructed during operation.
+
+If fewer than two matching asteroids remain, it returns home and ends the run.
+Missing bookmarks or failed memory reads stop the worker and restore controls;
+check the log and take manual control when required. A cached-root failure retries
+once with a full scan. Each reader invocation has the configured timeout, so a retry
+can take twice that time. The first scan may be much slower than subsequent reads.
+
+Panic during a run asks the same worker to recall drones and return to the named
+home bookmark, avoiding two workers issuing competing inputs. It interrupts the
+mining wait but waits for an in-progress memory read, warp wait, or input action.
+The application remains open. Docking is checked before cargo unloading.
+
+Cargo fullness remains an estimate from hold capacity and yield; this is not a
+fully state-driven bot. There is no new combat detection or automatic escape logic.
+The old executable's C# source/build project is not included in this repository.
+
+For the original coordinate-only behavior, set `automation_mode = coordinates`.
+That mode retains the original platform limitations and uses the setup below.
+
 ## Features
 
 - Automated mining in EVE Online
 - User-friendly GUI for configuration
 - Easy control of bot start and stop (even a panic button)
 - Display of the current mouse position on the screen
-- Cross platform (Windows, Macos and Linux), albeit no EVE window recognition on Macos and Linux
+- Windows Sanderling mode; legacy coordinate mode also supports macOS/Linux without EVE window recognition
 - Can take screenshots of mining progress
 - Logging to console and log file
 
@@ -27,7 +84,7 @@ pip install -r requirements.txt
 
 It has been tested to work on Python 3. No progress will likely be done to make it backwards compatible with Python 2 (if not already compatible). Depending on your setup you might need to make aliases from pip3 and python3 to pip and python, or just change the commands.
 
-## Usage
+## Legacy coordinate-mode setup
 
 1. Ensure that you have installed the required modules as per the requirements.
 
@@ -62,7 +119,7 @@ python main.py
    
 9. Click the stop button if you want to end the bot prematurely. It will complete the current mining cycle and then stop flying into the belt. 
 
-10. Click the panic button if you want to immediately call back drones and dock to station. This will exit the bot.
+10. Click the panic button if you want to immediately call back drones and dock to station. The application remains open; during an active run the worker returns at the next action boundary.
 
 ## Display of Mouse Position
 The GUI application continuously displays the current mouse position on the screen. This can be helpful for accurately determining the coordinates for the positions mentioned above.
