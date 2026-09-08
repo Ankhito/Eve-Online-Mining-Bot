@@ -6,9 +6,9 @@ import pytest
 from Bot.ui import Application
 
 
-@pytest.fixture
-def app(tmp_path):
-    path = tmp_path / "config.properties"
+@pytest.fixture(scope="module")
+def app(tmp_path_factory):
+    path = tmp_path_factory.mktemp("ui") / "config.properties"
     path.write_text("[SETTINGS]\nore_priority=Veldspar\n    Plagioclase\n[POSITIONS]\n")
     window = Application(str(path))
     window.geometry("940x740")
