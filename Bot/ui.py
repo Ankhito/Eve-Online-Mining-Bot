@@ -37,6 +37,7 @@ class Application(tk.Tk):
         super().__init__()
         self.title("EVE Mining | Flight deck")
         self.geometry("1040x820")
+        self.after_idle(self._show_on_startup)
         self.minsize(940, 740)
         self.configure(bg=BG)
         self.config_file = ConfigHandler(config_path)
@@ -82,6 +83,14 @@ class Application(tk.Tk):
             retention="7 days",
             level="INFO",
         )
+
+    def _show_on_startup(self) -> None:
+        """Put a newly launched flight deck in front of other desktop windows."""
+        self.deiconify()
+        self.lift()
+        self.attributes("-topmost", True)
+        self.after(250, lambda: self.attributes("-topmost", False))
+        self.focus_force()
 
     def _style(self) -> None:
         style = ttk.Style(self)
