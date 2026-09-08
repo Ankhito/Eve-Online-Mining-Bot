@@ -110,12 +110,18 @@ def test_wrong_warp_distance_is_rejected(navigation):
 
 def test_panic_does_not_cancel_its_own_return(navigation, monkeypatch):
     navigation.cancelled = lambda: True
+    navigation.session.read.side_effect = [node(), node(), docked()]
     monkeypatch.setattr(
         navigation, "station_menu", lambda: [nav.MenuItem("Dock", (9, 10))]
     )
     navigation.dock()
     navigation.inputs.click.assert_called_once_with(9, 10, button="left")
     assert not navigation.returning_home
+
+
+def test_return_when_already_home_sends_no_input(navigation):
+    navigation.dock()
+    assert not navigation.inputs.mock_calls
 
 
 def test_wrong_docked_station_is_rejected(navigation, monkeypatch):
@@ -173,3 +179,53 @@ def test_second_belt_can_satisfy_priorities(navigation, monkeypatch):
     monkeypatch.setattr(navigation, "_travel_one", attempt)
     navigation.travel()
     assert attempt.call_count == 2
+
+
+def test_hud_alone_is_not_ready_after_undock():
+    assert not nav.space_ready(node("ShipUI"))
+    ready = node(
+        children=[
+            node("ShipUI"),
+            node("ModuleButton"),
+            node("ListSurroundingsBtn"),
+            node("OverviewWindow"),
+        ]
+    )
+    assert nav.space_ready(ready)
+    ready["children"].append(node("LoadingWnd"))
+    assert not nav.space_ready(ready)
+
+
+def test_readiness_must_remain_stable(navigation, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(nav.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(nav, "space_ready", lambda s: s["ready"])
+    results = []
+
+    def wait(predicate, description):
+        for timestamp, ready in [
+            (0, True),
+            (5, True),
+            (6, False),
+            (7, True),
+            (18, True),
+            (19, True),
+        ]:
+            clock[0] = timestamp
+            results.append(predicate({"ready": ready}))
+
+    monkeypatch.setattr(navigation, "wait_for", wait)
+    navigation.wait_until_ready()
+    assert results == [False, False, False, False, False, True]
+
+
+def test_cascade_moves_horizontally_before_selecting_child(navigation, monkeypatch):
+    parent = nav.MenuItem("Asteroid Belts", (10, 30))
+    child = nav.MenuItem("Belt 1", (150, 120))
+    action = nav.MenuItem("Warp to", (300, 120))
+    monkeypatch.setattr(nav, "menu_groups", lambda s: [[parent], [child], [action]])
+    monkeypatch.setattr(navigation, "pause", Mock())
+    navigation.menu_hover = parent.position
+    navigation.expand(child)
+    assert navigation.inputs.move.call_args_list[0].args == (150, 30)
+    assert navigation.inputs.move.call_args_list[1].args == (150, 120)

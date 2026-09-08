@@ -21,6 +21,7 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(bot, "make_session", lambda config, window: session)
     actions = Mock()
     monkeypatch.setattr(bot, "fe", actions)
+    monkeypatch.setattr(bot, "AutomaticShip", Mock())
     events = []
     controller = bot.Controller(lambda key, value: events.append((key, value)))
     controller.busy = True
@@ -131,3 +132,21 @@ def test_activation_uses_native_fallback_when_eve_is_not_foreground(monkeypatch)
     controller.activate()
 
     force.assert_called_once_with(456)
+
+
+def test_automatic_mode_does_not_require_legacy_values(setup):
+    config, _, _, _, _ = setup
+    config.config.set("SETTINGS", "auto_navigation", "True")
+    for key in ("mining_hold", "mining_yield", "mining_reset_timer", "mining_range_m"):
+        config.config.set("SETTINGS", key, "")
+    for key in ("mouse_reset_coo", "clear_cargo_coo"):
+        config.config.set("POSITIONS", key, "")
+    bot.validate_config(config)
+
+
+def test_foreground_eve_is_not_reactivated_during_menu_hover(monkeypatch):
+    controller = bot.Controller(Mock())
+    controller.window = Mock(_hWnd=123)
+    monkeypatch.setattr(bot, "_is_foreground_window", lambda hwnd: True)
+    controller.activate()
+    controller.window.activate.assert_not_called()

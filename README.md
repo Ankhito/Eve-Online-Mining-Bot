@@ -13,9 +13,10 @@ and **Advanced**. Configuration is saved to `config.properties`.
 
 1. Start docked at the station where you want to unload. Select your EVE client.
 2. Use **Check EVE** for a read-only connection check. Expand the EVE location panel.
-3. In **Ship & timing**, set mining hold, total laser yield, laser range and cycle time.
-4. In **Advanced**, calibrate cargo unloading and mouse-reset coordinates with
-   **Capture in 3 s**. These two positions are still required.
+3. Keep the inventory tree expanded so **Mining Hold** and, when docked, **Item Hangar** are visible.
+4. Choose the number of trips. Automatic mode detects laser range from module tooltips,
+   observes module activity, and reads actual hold fullness. Yield, cycle time and coordinates
+   are legacy settings and are disabled in automatic mode.
 5. Set your ore preferences, then click **Start session**.
 
 Automatic navigation records the current station name **in memory for this run**.
@@ -26,7 +27,12 @@ checks the station identity before unloading. Starting a later session from anot
 station makes that station home. No station or asteroid bookmarks are created or
 required in this mode.
 
-The bot checks up to three belts for at least two suitable asteroids in range. It
+After undocking, the bot waits for the HUD, modules, overview and location controls
+to remain available for 12 seconds without a loading window. It reads module tooltips
+using normal mouse hovering and verifies hardener activation. Menu clicks are held
+briefly, and each submenu must be observed before continuing.
+
+The bot checks up to three belts for a suitable asteroid in range. It
 returns home if none qualify. It never chooses an arbitrary station when it cannot
 identify the remembered one. Navigation waits are bounded; missing menus, unsupported
 UI labels, and failed reads produce an actionable error. A return is attempted after
@@ -46,7 +52,8 @@ Enable **Mine unlisted ores** to fall back to other ores; disable it for a stric
 allowlist. **Read visible ores** fills the selector from the current overview without
 moving the ship. The **Name**, **Type**, and **Distance** overview columns should be
 visible. A separate **Size** column is supported and is not interpreted as distance.
-Two eligible asteroids are still required by the existing two-laser routine.
+Automatic mode puts the detected mining modules on one preferred asteroid and
+retargets when modules become inactive. It does not reset active lasers on a timer.
 
 ```ini
 [SETTINGS]
@@ -56,14 +63,13 @@ ore_priority = Veldspar-II Grade
     Veldspar
     Plagioclase
 allow_unlisted_ores = True
-mining_range_m = 15000
 asteroid_name_pattern = ^Asteroid\b
 memory_read_timeout = 120
 ```
 
 ## Controls and limitations
 
-**Stop after cycle** completes the current cycle and returns. **Return home** requests
+**Stop and return** ends automatic mining after the current action (legacy mode finishes its cycle). **Return home** requests
 an early return using the same input worker. The mining wait is interruptible; an
 in-progress input action or memory read finishes first. Closing during a run requests
 a return rather than terminating the worker in space. The UI stays responsive while
@@ -75,10 +81,14 @@ is unchanged from upstream Sanderling. Read-only checks have verified station ca
 and asteroid parsing on a live client; full automated undock/warp/dock operation still
 requires an in-game validation run. Keep the client visible and use the English UI.
 
-Cargo fullness remains estimated from capacity and yield. Cargo dragging, drone keys,
-and the two-laser routine retain the original assumptions. There is no combat escape
-system, automatic fit detection, or guarantee for unusual UI scaling. Check the activity
-panel and `client.log` if the app needs attention.
+Automatic mode returns at 95% observed Mining Hold capacity and drags the selected ore
+stacks into the observed Item Hangar entry, then verifies the hold is empty. It needs
+readable English module tooltips and a visible Mining Hold gauge; missing or ambiguous
+readings stop the run with an error. The capacity parser has been checked against a live
+client, including localized number formatting. The complete new mining/transfer sequence
+still needs in-game validation. Automatic mode currently controls mining lasers and
+hardeners; it does not launch drones or provide combat escape. Legacy modes retain the
+old drone shortcuts and timer-driven two-laser routine. Check `client.log` for diagnostics.
 
 ## Legacy modes
 
