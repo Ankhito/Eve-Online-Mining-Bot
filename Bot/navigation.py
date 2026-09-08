@@ -93,7 +93,9 @@ def menu_groups(snapshot: sm.Node) -> list[list[MenuItem]]:
                     )
             if entries:
                 groups.append(sorted(entries, key=lambda item: item.position[1]))
-    return groups
+    # The location menu opens at the left edge; its cascade extends rightward.
+    # Layer children may be in z-order rather than parent-to-child order.
+    return sorted(groups, key=lambda group: min(item.position[0] for item in group))
 
 
 def exact_item(items: list[MenuItem], name: str) -> MenuItem:
@@ -124,6 +126,26 @@ def is_warping(snapshot: sm.Node) -> bool:
     )
 
 
+def space_ready(snapshot: sm.Node) -> bool:
+    """The HUD alone appears before the undock transition has finished."""
+    if named_nodes(snapshot, "LobbyWnd"):
+        return False
+    if any(
+        n.get("pythonObjectTypeName") in {"LoadingWnd", "Loading", "ProgressWnd"}
+        or n.get("dictEntriesOfInterest", {}).get("_name") == "sessionChangeIndicator"
+        for n in sm.walk(snapshot)
+    ):
+        return False
+    return bool(
+        named_nodes(snapshot, "ShipUI")
+        and named_nodes(snapshot, "ModuleButton")
+        and named_nodes(snapshot, "ListSurroundingsBtn")
+        and any(
+            "Overview" in n.get("pythonObjectTypeName", "") for n in sm.walk(snapshot)
+        )
+    )
+
+
 class AutoNavigation:
     def __init__(
         self,
@@ -140,6 +162,7 @@ class AutoNavigation:
         self.returning_home = False
         self.visited: set[str] = set()
         self.last_belt: str | None = None
+        self.menu_hover: sm.Position | None = None
 
     def check(self) -> None:
         if self.cancelled() and not self.returning_home:
@@ -162,6 +185,26 @@ class AutoNavigation:
         self.check()
         self.inputs.click(*self.session.screen(position), button=button)
 
+    def pause(self, seconds: float) -> None:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self.check()
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+
+    def wait_until_ready(self) -> None:
+        stable_since: float | None = None
+
+        def ready(snapshot: sm.Node) -> bool:
+            nonlocal stable_since
+            if not space_ready(snapshot):
+                stable_since = None
+                return False
+            if stable_since is None:
+                stable_since = time.monotonic()
+            return time.monotonic() - stable_since >= 12
+
+        self.wait_for(ready, "space UI to finish loading and remain ready")
+
     def open_surroundings(self) -> list[MenuItem]:
         self.check()
         snapshot = self.session.read()
@@ -176,17 +219,41 @@ class AutoNavigation:
                 "Expand the location panel to show the solar-system menu"
             )
         self.click(sm.get_center_position(buttons[0]), "right")
-        snapshot = self.wait_for(lambda s: bool(menu_groups(s)), "solar-system menu")
-        return menu_groups(snapshot)[-1]
+        self.pause(0.8)
+        snapshot = self.wait_for(
+            lambda s: any(
+                normalized(item.name)
+                in {"asteroid belts", "stations", "structures", "planets"}
+                for group in menu_groups(s)
+                for item in group
+            ),
+            "solar-system menu categories",
+        )
+        return menu_groups(snapshot)[0]
 
     def expand(self, item: MenuItem) -> list[MenuItem]:
-        before = len(menu_groups(self.session.read()))
+        groups = menu_groups(self.session.read())
+        parents = [i for i, group in enumerate(groups) if item in group]
+        if len(parents) != 1:
+            raise sm.UIElementError(
+                f"Menu changed before selecting {item.name!r}; retry the run"
+            )
+        parent = parents[0]
         self.check()
+        # Enter a cascading menu horizontally before moving vertically; a diagonal
+        # move can cross another parent entry and close the intended submenu.
+        if parent and self.menu_hover:
+            previous_y = self.menu_hover[1]
+            self.inputs.move(*self.session.screen((item.position[0], previous_y)))
         self.inputs.move(*self.session.screen(item.position))
+        self.menu_hover = item.position
+        self.pause(0.8)
         snapshot = self.wait_for(
-            lambda s: len(menu_groups(s)) > before, f"submenu for {item.name}"
+            lambda s: len(menu_groups(s)) > parent + 1
+            and item in menu_groups(s)[parent],
+            f"submenu for {item.name}",
         )
-        return menu_groups(snapshot)[-1]
+        return menu_groups(snapshot)[parent + 1]
 
     def station_menu(self) -> list[MenuItem]:
         categories = self.open_surroundings()
@@ -208,7 +275,7 @@ class AutoNavigation:
                 return self.expand(matches[0])
             categories = self.open_surroundings()
         raise sm.UIElementError(
-            f"Home station {self.home_station!r} is not in this system's menu"
+            f"Home station {self.home_station!r} was not identified. Visible categories: {', '.join(i.name for i in categories)}"
         )
 
     def prepare_docked(self) -> None:
@@ -281,9 +348,9 @@ class AutoNavigation:
             self.session.ore_priority,
             self.session.allow_unlisted,
         )
-        if len(asteroids) < 2:
+        if not asteroids:
             raise sm.MiningTargetsUnavailable(
-                "Selected belt has fewer than two asteroids in range; returning home"
+                "Selected belt has no preferred asteroids in laser range"
             )
 
     def dock(self) -> None:
@@ -294,6 +361,13 @@ class AutoNavigation:
         # A panic request interrupts outbound travel, never its own return-home path.
         self.returning_home = True
         try:
+            snapshot = self.session.read()
+            if named_nodes(snapshot, "LobbyWnd"):
+                if normalized(station_name(snapshot)) == normalized(self.home_station):
+                    return
+                raise sm.UIElementError(
+                    "Docked station does not match the remembered home; refusing to unload"
+                )
             self.wait_for(
                 lambda s: not is_warping(s), "current warp to finish before returning"
             )

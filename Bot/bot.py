@@ -17,6 +17,7 @@ from Bot import functions as fe
 from Bot import navigation as nav
 from Bot import sanderling as sm
 from Bot.config import ConfigHandler
+from Bot.ship import AutomaticShip
 
 EventSink = Callable[[str, str], None]
 
@@ -67,6 +68,19 @@ def _force_foreground_window(hwnd: int) -> None:
 
 
 def validate_config(config: ConfigHandler) -> None:
+    automatic = (
+        config.get_automation_mode() == "sanderling" and config.get_auto_navigation()
+    )
+    if automatic:
+        for label, value in (
+            ("Mining runs", config.get_mining_runs()),
+            ("Memory read timeout", config.get_memory_read_timeout()),
+        ):
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{label} must be a positive number")
+        if not config.get_allow_unlisted_ores() and not config.get_ore_priority():
+            raise ValueError("Add at least one ore priority or allow unlisted ores")
+        return
     for label, value in (
         ("Mining runs", config.get_mining_runs()),
         ("Mining hold", config.get_mining_hold()),
@@ -109,7 +123,7 @@ def make_session(config: ConfigHandler, window: Any) -> sm.Session | None:
         window._hWnd,
         config.get_home_bookmark_name(),
         config.get_mining_bookmark_prefix(),
-        config.get_mining_range(),
+        15000 if config.get_auto_navigation() else config.get_mining_range(),
         config.get_asteroid_name_pattern(),
         config.get_memory_read_timeout(),
         config.get_ore_priority(),
@@ -123,7 +137,12 @@ class NavigationInput:
 
     def click(self, x: int, y: int, button: str = "left") -> None:
         self.activate()
-        pyautogui.click(x, y, button=button)
+        pyautogui.moveTo(x, y, duration=0.2)
+        pyautogui.mouseDown(button=button)
+        try:
+            time.sleep(0.15)
+        finally:
+            pyautogui.mouseUp(button=button)
 
     def move(self, x: int, y: int) -> None:
         self.activate()
@@ -132,6 +151,11 @@ class NavigationInput:
     def hotkey(self, *keys: str) -> None:
         self.activate()
         pyautogui.hotkey(*keys)
+
+    def drag(self, source: sm.Position, destination: sm.Position) -> None:
+        self.activate()
+        pyautogui.moveTo(*source, duration=0.3)
+        pyautogui.dragTo(*destination, duration=1, button="left")
 
 
 class Controller:
@@ -146,6 +170,8 @@ class Controller:
     def activate(self) -> None:
         if self.window is not None:
             hwnd = int(self.window._hWnd)
+            if _is_foreground_window(hwnd):
+                return
             try:
                 self.window.activate()
             except Exception as error:
@@ -173,7 +199,10 @@ class Controller:
 
     def stop(self) -> None:
         self.stop_requested.set()
-        self.emit("status", "Finishing this cycle, then returning home")
+        self.emit(
+            "status",
+            "Stop requested; returning after the current action (legacy mode finishes its cycle)",
+        )
 
     def panic(self) -> None:
         self.stop_requested.set()
@@ -186,11 +215,18 @@ class Controller:
 
     def run(self, config: ConfigHandler) -> None:
         navigation: nav.AutoNavigation | None = None
+        ship: AutomaticShip | None = None
         session: sm.Session | None = None
         in_space = False
         completed = 0
         runs = config.get_mining_runs()
-        loading_time = config.get_mining_hold() / config.get_mining_yield()
+        automatic = (
+            config.get_automation_mode() == "sanderling"
+            and config.get_auto_navigation()
+        )
+        loading_time = (
+            0.0 if automatic else config.get_mining_hold() / config.get_mining_yield()
+        )
         self.emit("progress", f"0/{runs}")
         self.emit("home", "Reading starting station?")
         try:
@@ -206,6 +242,10 @@ class Controller:
                         self.panic_requested.is_set,
                     )
                     navigation.prepare_docked()
+                    ship = AutomaticShip(
+                        navigation, NavigationInput(self.activate), self.emit
+                    )
+                    ship.hold()
                     self.emit("home", navigation.home_station)
                 else:
                     self.emit("home", config.get_home_bookmark_name())
@@ -220,17 +260,17 @@ class Controller:
                 fe.undock(x, y)
                 in_space = True
                 if navigation:
-                    navigation.wait_for(
-                        lambda s: not nav.named_nodes(s, "LobbyWnd")
-                        and bool(nav.named_nodes(s, "ShipUI")),
-                        "undocking",
-                    )
+                    self.phase("Waiting for space to finish loading")
+                    navigation.wait_until_ready()
+                    if ship:
+                        ship.discover()
                 else:
                     fe.sleep_and_log(12)
                 end_after_return = False
                 try:
                     if not self.panic_requested.is_set():
-                        fe.set_hardener_online(config.get_hardener_keys())
+                        if not ship:
+                            fe.set_hardener_online(config.get_hardener_keys())
                         self.phase("Travelling to asteroid belt")
                         if navigation:
                             navigation.travel()
@@ -246,36 +286,19 @@ class Controller:
                                 fe.sleep_and_log(config.get_warping_time())
                     if not self.panic_requested.is_set():
                         self.phase("Mining")
-                        self.emit("deadline", str(time.time() + loading_time))
-                        self.activate()
-                        rm_x, rm_y = config.get_mouse_reset_coo()
-                        fe.drone_out(rm_x, rm_y)
-                        tx1, ty1 = (0, 0) if session else config.get_target_one_coo()
-                        tx2, ty2 = (0, 0) if session else config.get_target_two_coo()
-                        fe.mining_behaviour(
-                            tx1,
-                            ty1,
-                            tx2,
-                            ty2,
-                            config.get_mining_reset_timer(),
-                            loading_time,
-                            rm_x,
-                            rm_y,
-                            config.get_unlock_all_targets_key(),
-                            self.activate,
-                            self.stop_requested.is_set,
-                            config.get_auto_reset_miners(),
-                            refresh_targets=session.targets if session else None,
-                            should_abort=self.panic_requested.is_set,
-                        )
+                        if ship:
+                            ship.mine(self.stop_requested.is_set)
+                        else:
+                            self.mine_legacy(config, session, loading_time)
                 except (sm.MiningTargetsUnavailable, nav.Cancelled) as error:
                     self.emit("log", str(error))
                     end_after_return = True
                 self.phase("Returning home")
                 self.emit("deadline", "0")
                 self.activate()
-                fe.drone_in()
-                fe.sleep_and_log(12)
+                if not ship:
+                    fe.drone_in()
+                    fe.sleep_and_log(12)
                 if navigation:
                     navigation.dock()
                 else:
@@ -291,7 +314,10 @@ class Controller:
                     session.undock()  # Verify docking before unloading.
                 in_space = False
                 self.phase("Unloading ore")
-                fe.clear_cargo(*config.get_clear_cargo_coo())
+                if ship:
+                    ship.unload()
+                else:
+                    fe.clear_cargo(*config.get_clear_cargo_coo())
                 completed += 1
                 self.emit("progress", f"{completed}/{runs}")
                 if config.get_take_screenshots():
@@ -308,7 +334,8 @@ class Controller:
                 try:
                     self.phase("Recovering: returning home")
                     self.activate()
-                    fe.drone_in()
+                    if not ship:
+                        fe.drone_in()
                     navigation.dock()
                     self.phase("Stopped at home after an error")
                 except Exception as return_error:
@@ -321,6 +348,32 @@ class Controller:
             with self.lock:
                 self.busy = False
             self.emit("done", "")
+
+    def mine_legacy(
+        self, config: ConfigHandler, session: sm.Session | None, loading_time: float
+    ) -> None:
+        self.emit("deadline", str(time.time() + loading_time))
+        self.activate()
+        rm_x, rm_y = config.get_mouse_reset_coo()
+        fe.drone_out(rm_x, rm_y)
+        tx1, ty1 = (0, 0) if session else config.get_target_one_coo()
+        tx2, ty2 = (0, 0) if session else config.get_target_two_coo()
+        fe.mining_behaviour(
+            tx1,
+            ty1,
+            tx2,
+            ty2,
+            config.get_mining_reset_timer(),
+            loading_time,
+            rm_x,
+            rm_y,
+            config.get_unlock_all_targets_key(),
+            self.activate,
+            self.stop_requested.is_set,
+            config.get_auto_reset_miners(),
+            refresh_targets=session.targets if session else None,
+            should_abort=self.panic_requested.is_set,
+        )
 
 
 def start() -> None:

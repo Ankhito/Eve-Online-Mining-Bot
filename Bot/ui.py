@@ -49,6 +49,7 @@ class Application(tk.Tk):
         self.fields: dict[str, tk.StringVar] = {}
         self.position_fields: dict[str, tk.StringVar] = {}
         self.editable: list[Any] = []
+        self.legacy_controls: list[Any] = []
         self.status = tk.StringVar(value="Ready to prepare")
         self.detail = tk.StringVar(
             value="Start docked. Your starting station becomes home for this run."
@@ -70,6 +71,9 @@ class Application(tk.Tk):
         self._style()
         self._build()
         self.refresh_windows()
+        self.mode.trace_add("write", lambda *args: self._mode_controls())
+        self.automatic.trace_add("write", lambda *args: self._mode_controls())
+        self._mode_controls()
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.after(100, self._drain)
         logger.add(
@@ -211,7 +215,7 @@ class Application(tk.Tk):
         self.start_button.pack(side="left")
         self.stop_button = ttk.Button(
             footer,
-            text="Stop after cycle",
+            text="Stop and return",
             command=self.controller.stop,
             state="disabled",
         )
@@ -378,6 +382,8 @@ class Application(tk.Tk):
         entry = ttk.Entry(parent, textvariable=variable, width=19)
         entry.grid(row=row, column=1, sticky="ew", pady=5)
         self.editable.append(entry)
+        if key not in {"mining_runs", "memory_read_timeout", "asteroid_name_pattern"}:
+            self.legacy_controls.append(entry)
         ttk.Label(parent, text=hint, style="Muted.TLabel", wraplength=450).grid(
             row=row, column=2, sticky="w", padx=(16, 0)
         )
@@ -388,7 +394,7 @@ class Application(tk.Tk):
         ).pack(anchor="w")
         ttk.Label(
             self.ship_tab,
-            text="Set these once for your fit. Cargo fullness is estimated from your yield.",
+            text="Automatic mode reads module tooltips and hold fullness. Greyed-out settings apply only to legacy control.",
             style="Muted.TLabel",
         ).pack(anchor="w", pady=(6, 14))
         form = ttk.Frame(self.ship_tab)
@@ -442,6 +448,8 @@ class Application(tk.Tk):
             check = ttk.Checkbutton(self.ship_tab, text=label, variable=variable)
             check.pack(anchor="w", pady=(12, 0))
             self.editable.append(check)
+            if variable is self.reset_miners:
+                self.legacy_controls.append(check)
 
     def _advanced(self) -> None:
         ttk.Label(
@@ -465,7 +473,7 @@ class Application(tk.Tk):
         self.editable.extend([mode, automatic])
         ttk.Label(
             self.advanced_tab,
-            text="Cargo unload and mouse reset still need calibration. Capture waits 3 seconds for you to place the pointer in EVE.",
+            text="Automatic mode needs no coordinates. The calibration controls below are for legacy mode only.",
             style="Muted.TLabel",
             wraplength=840,
         ).pack(anchor="w", pady=(0, 8))
@@ -497,6 +505,7 @@ class Application(tk.Tk):
             )
             button.grid(row=row, column=2, padx=10, pady=3)
             self.editable.extend([entry, button])
+            self.legacy_controls.extend([entry, button])
         ttk.Label(
             self.advanced_tab,
             text="Legacy belt coordinates · one x, y pair per line",
@@ -515,6 +524,7 @@ class Application(tk.Tk):
         )
         self.belt_text.pack(fill="x")
         self.editable.append(self.belt_text)
+        self.legacy_controls.append(self.belt_text)
         extra = ttk.Frame(self.advanced_tab)
         extra.pack(fill="x", pady=(8, 0))
         for row, args in enumerate(
@@ -665,6 +675,17 @@ class Application(tk.Tk):
         active = self.controller.busy
         self.stop_button.configure(state="normal" if active else "disabled")
         self.panic_button.configure(state="normal" if active else "disabled")
+        if not busy:
+            self._mode_controls()
+
+    def _mode_controls(self) -> None:
+        automatic = self.mode.get() == "sanderling" and self.automatic.get()
+        for widget in self.legacy_controls:
+            widget.configure(
+                state="disabled"
+                if automatic or self.controller.busy or self.inspect_busy
+                else "normal"
+            )
 
     def add_ore(self) -> None:
         value = self.ore_entry.get().strip()
