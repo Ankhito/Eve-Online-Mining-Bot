@@ -101,3 +101,33 @@ def test_empty_whitelist_rejected(setup):
     config.config.set("SETTINGS", "allow_unlisted_ores", "False")
     with pytest.raises(ValueError, match="priority"):
         bot.validate_config(config)
+
+
+def test_activation_accepts_pygetwindow_error_when_eve_is_foreground(monkeypatch):
+    window = Mock(_hWnd=123)
+    window.activate.side_effect = RuntimeError(
+        "Error code from Windows: 0 - The operation completed successfully."
+    )
+    controller = bot.Controller(Mock())
+    controller.window = window
+    force = Mock()
+    monkeypatch.setattr(bot, "_is_foreground_window", lambda hwnd: hwnd == 123)
+    monkeypatch.setattr(bot, "_force_foreground_window", force)
+
+    controller.activate()
+
+    force.assert_not_called()
+
+
+def test_activation_uses_native_fallback_when_eve_is_not_foreground(monkeypatch):
+    window = Mock(_hWnd=456)
+    window.activate.side_effect = RuntimeError("Windows rejected activation")
+    controller = bot.Controller(Mock())
+    controller.window = window
+    force = Mock()
+    monkeypatch.setattr(bot, "_is_foreground_window", lambda hwnd: False)
+    monkeypatch.setattr(bot, "_force_foreground_window", force)
+
+    controller.activate()
+
+    force.assert_called_once_with(456)
