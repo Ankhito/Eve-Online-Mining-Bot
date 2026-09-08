@@ -12,8 +12,9 @@ import subprocess
 import sys
 import threading
 from ctypes import wintypes
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
 Node = dict[str, Any]
 Position = tuple[int, int]
@@ -36,7 +37,7 @@ def walk(node: Any) -> Iterator[Node]:
         if node.get("dictEntriesOfInterest", {}).get("_display") is False:
             return
         yield node
-        for child in node.get("children", []):
+        for child in node.get("children") or []:
             yield from walk(child)
     elif isinstance(node, list):
         for child in node:
@@ -46,7 +47,9 @@ def walk(node: Any) -> Iterator[Node]:
 def text(node: Node) -> str:
     data = node.get("dictEntriesOfInterest", node)
     value = data.get("_text") or data.get("_setText") or ""
-    return html.unescape(re.sub(r"<[^>]*>", "", str(value))).strip()
+    if not isinstance(value, str):
+        return ""  # Some recent clients expose a Link object rather than text.
+    return html.unescape(re.sub(r"<[^>]*>", "", value)).strip()
 
 
 def number(value: Any) -> float:
@@ -66,7 +69,7 @@ def adjust_display_positions(node: Node) -> Node:
         x += number(data.get("_displayX", 0))
         y += number(data.get("_displayY", 0))
         data.update(_displayX=x, _displayY=y)
-        for child in current.get("children", []):
+        for child in current.get("children") or []:
             visit(child, x, y)
 
     visit(result, 0, 0)
@@ -172,9 +175,20 @@ def select_bookmark(
     return selected, bookmarks[selected]
 
 
-def find_asteroids(
-    snapshot: Node, max_range: float, name_pattern: str
-) -> list[Position]:
+@dataclass(frozen=True)
+class Asteroid:
+    name: str
+    distance: float
+    position: Position
+
+
+def asteroid_candidates(
+    snapshot: Node,
+    max_range: float,
+    name_pattern: str,
+    ore_priority: Sequence[str] = (),
+    allow_unlisted: bool = True,
+) -> list[Asteroid]:
     if not math.isfinite(max_range) or max_range <= 0 or not name_pattern.strip():
         raise UIElementError(
             "Set a positive mining_range_m and nonempty asteroid_name_pattern"
@@ -183,26 +197,89 @@ def find_asteroids(
         pattern = re.compile(name_pattern, re.I)
     except re.error as error:
         raise UIElementError(f"Invalid asteroid_name_pattern: {error}") from error
-    candidates: list[tuple[float, Position]] = []
-    for row in walk(snapshot):
-        if row.get("pythonObjectTypeName") != "OverviewScrollEntry":
-            continue
-        labels = [node for node in walk(row) if text(node)]
-        names = [node for node in labels if pattern.search(text(node))]
-        if not names:
-            continue
-        distances = []
-        for label in labels:
-            try:
-                distances.append(parse_distance_in_meters(text(label)))
-            except ValueError:
+    priorities = {
+        " ".join(name.casefold().split()): rank
+        for rank, name in reversed(list(enumerate(ore_priority)))
+        if name.strip()
+    }
+    candidates: list[Asteroid] = []
+    overviews = [
+        n for n in walk(snapshot) if n.get("pythonObjectTypeName") == "OverviewWindow"
+    ]
+    for overview in overviews or [snapshot]:
+        headers: dict[str, tuple[float, float]] = {}
+        for header in walk(overview):
+            if header.get("pythonObjectTypeName") != "Header":
                 continue
-        # Ambiguous columns are safer to skip than to interpret as a distance.
-        if len(distances) != 1 or distances[0] > max_range:
-            continue
-        candidates.append((distances[0], get_center_position(names[0])))
-    candidates.sort(key=lambda item: (item[0], item[1][1]))
-    positions = list(dict.fromkeys(position for _, position in candidates))
+            data = header.get("dictEntriesOfInterest", {})
+            header_labels = [text(n).casefold() for n in walk(header) if text(n)]
+            for header_label in header_labels:
+                x = number(data.get("_displayX", 0))
+                headers[header_label] = (x, x + number(data.get("_displayWidth", 0)))
+
+        def in_column(label: Node, column: str) -> bool:
+            left, right = headers[column]
+            x = number(label.get("dictEntriesOfInterest", {}).get("_displayX", 0))
+            return left <= x < right
+
+        for row in walk(overview):
+            if row.get("pythonObjectTypeName") != "OverviewScrollEntry":
+                continue
+            labels = [n for n in walk(row) if text(n)]
+            names = [n for n in labels if pattern.search(text(n))]
+            if not names:
+                continue
+            distance_labels = (
+                [n for n in labels if in_column(n, "distance")]
+                if "distance" in headers
+                else labels
+            )
+            distances = []
+            for label in distance_labels:
+                try:
+                    distances.append(parse_distance_in_meters(text(label)))
+                except ValueError:
+                    continue
+            if len(distances) != 1 or distances[0] > max_range:
+                continue
+            name_labels = (
+                [n for n in labels if in_column(n, "name")]
+                if "name" in headers
+                else names
+            )
+            target = name_labels[0] if len(name_labels) == 1 else names[0]
+            ore_name = text(target)
+            if (
+                not allow_unlisted
+                and " ".join(ore_name.casefold().split()) not in priorities
+            ):
+                continue
+            candidates.append(
+                Asteroid(ore_name, distances[0], get_center_position(target))
+            )
+    candidates.sort(
+        key=lambda item: (
+            priorities.get(" ".join(item.name.casefold().split()), len(priorities)),
+            item.distance,
+            item.position[1],
+        )
+    )
+    return list({item.position: item for item in candidates}.values())
+
+
+def find_asteroids(
+    snapshot: Node,
+    max_range: float,
+    name_pattern: str,
+    ore_priority: Sequence[str] = (),
+    allow_unlisted: bool = True,
+) -> list[Position]:
+    positions = [
+        item.position
+        for item in asteroid_candidates(
+            snapshot, max_range, name_pattern, ore_priority, allow_unlisted
+        )
+    ]
     if len(positions) < 2:
         raise MiningTargetsUnavailable(
             "Fewer than two matching asteroids in mining range; returning home"
@@ -303,6 +380,8 @@ class Session:
         mining_range: float,
         asteroid_pattern: str,
         timeout: float,
+        ore_priority: Sequence[str] = (),
+        allow_unlisted: bool = True,
     ):
         self.hwnd = hwnd
         self.reader = MemoryReader(get_pid_by_hwnd(hwnd), timeout)
@@ -310,6 +389,8 @@ class Session:
         self.mining_prefix = mining_prefix
         self.mining_range = mining_range
         self.asteroid_pattern = asteroid_pattern
+        self.ore_priority = list(ore_priority)
+        self.allow_unlisted = allow_unlisted
         self.previous: str | None = None
 
     def read(self) -> Node:
@@ -321,10 +402,11 @@ class Session:
         x, y = client_origin(self.hwnd)
         return position[0] + x, position[1] + y
 
-    def validate(self) -> None:
+    def validate(self, require_bookmarks: bool = True) -> None:
         snapshot = self.read()
         find_undock_button(snapshot)
-        select_bookmark(snapshot, self.home_name, self.mining_prefix)
+        if require_bookmarks:
+            select_bookmark(snapshot, self.home_name, self.mining_prefix)
         if not math.isfinite(self.mining_range) or self.mining_range <= 0:
             raise UIElementError("mining_range_m must be positive")
         if not self.asteroid_pattern.strip():
@@ -356,5 +438,7 @@ class Session:
                 self.read(),
                 self.mining_range,
                 self.asteroid_pattern,
+                self.ore_priority,
+                self.allow_unlisted,
             )
         ]

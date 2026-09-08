@@ -209,3 +209,84 @@ def test_session_rejects_changed_process(monkeypatch):
     monkeypatch.setattr(sm, "get_pid_by_hwnd", lambda hwnd: 456)
     with pytest.raises(sm.MemoryReadError, match="process changed"):
         session.read()
+
+
+def test_null_children_from_live_reader():
+    snapshot = node(children=[node()])
+    snapshot["children"][0]["children"] = None
+    assert len(list(sm.walk(sm.adjust_display_positions(snapshot)))) == 2
+
+
+def ore_overview():
+    headers = node(
+        "SortHeaders",
+        children=[
+            node("Header", x=0, _displayWidth=100, children=[node(value="Distance")]),
+            node(
+                "Header", x=100, _displayWidth=180, children=[node(value="Name", x=100)]
+            ),
+            node(
+                "Header", x=280, _displayWidth=100, children=[node(value="Type", x=280)]
+            ),
+            node(
+                "Header", x=380, _displayWidth=100, children=[node(value="Size", x=380)]
+            ),
+        ],
+    )
+    rows = []
+    for name, distance, y in [
+        ("Plagioclase", "500 m", 100),
+        ("Veldspar", "5 km", 130),
+        ("Veldspar-II Grade", "12.5 km", 160),
+    ]:
+        rows.append(
+            node(
+                "OverviewScrollEntry",
+                children=[
+                    node("OverviewLabel", value="1.370 m", x=390, y=y),
+                    node("OverviewLabel", value="Asteroid", x=290, y=y),
+                    node("OverviewLabel", value=name, x=110, y=y),
+                    node("OverviewLabel", value=distance, x=10, y=y),
+                ],
+            )
+        )
+    return node("OverviewWindow", children=[headers] + rows)
+
+
+def test_distance_column_is_not_confused_with_size():
+    result = sm.asteroid_candidates(ore_overview(), 15000, r"^Asteroid\b")
+    assert [(item.name, item.distance) for item in result] == [
+        ("Plagioclase", 500),
+        ("Veldspar", 5000),
+        ("Veldspar-II Grade", 12500),
+    ]
+
+
+def test_ore_priority_beats_distance_within_range():
+    result = sm.asteroid_candidates(
+        ore_overview(),
+        15000,
+        r"^Asteroid\b",
+        ["Veldspar-II Grade", "Veldspar", "Plagioclase"],
+    )
+    assert [item.name for item in result] == [
+        "Veldspar-II Grade",
+        "Veldspar",
+        "Plagioclase",
+    ]
+
+
+def test_ore_priority_never_exceeds_laser_range():
+    result = sm.asteroid_candidates(
+        ore_overview(), 10000, r"^Asteroid\b", ["Veldspar-II Grade", "Veldspar"]
+    )
+    assert [item.name for item in result] == ["Veldspar", "Plagioclase"]
+
+
+def test_unlisted_ore_can_be_excluded():
+    result = sm.asteroid_candidates(
+        ore_overview(), 15000, r"^Asteroid\b", ["veldspar"], False
+    )
+    assert [item.name for item in result] == ["Veldspar"]
+    with pytest.raises(sm.MiningTargetsUnavailable):
+        sm.find_asteroids(ore_overview(), 15000, r"^Asteroid\b", ["Veldspar"], False)

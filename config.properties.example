@@ -1,7 +1,12 @@
 [SETTINGS]
 # Sanderling is Windows-only; use coordinates for the legacy mode.
 automation_mode = sanderling
-# Keep these bookmarks visible in the EVE bookmark window.
+# Remember the starting station and use system menus; no bookmarks needed.
+auto_navigation = True
+# Highest priority first, one exact ore name per indented line.
+ore_priority =
+allow_unlisted_ores = True
+# Used only when auto_navigation is False.
 home_bookmark_name = Home
 mining_bookmark_prefix = Mining
 # Set this to your actual laser range, not targeting range.
