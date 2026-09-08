@@ -15,12 +15,12 @@ _DEFAULT_WARPING_TIME = 70.0
 
 
 class ConfigHandler:
-    def __init__(self, config_path):  # type: ignore
+    def __init__(self, config_path: str | os.PathLike[str]) -> None:
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"Configuration file {config_path} not found")
         self.config_path = config_path
         self.config = configparser.ConfigParser()
-        self.config.read(config_path)
+        self.config.read(config_path, encoding="utf-8")
 
     def get_automation_mode(self) -> str:
         mode = (
@@ -31,6 +31,24 @@ class ConfigHandler:
         if mode not in {"sanderling", "coordinates"}:
             raise ValueError("automation_mode must be sanderling or coordinates")
         return mode
+
+    def get_ore_priority(self) -> List[str]:
+        value = self.config.get("SETTINGS", "ore_priority", fallback="")
+        return list(
+            dict.fromkeys(name.strip() for name in value.splitlines() if name.strip())
+        )
+
+    def get_allow_unlisted_ores(self) -> bool:
+        return self.config.getboolean("SETTINGS", "allow_unlisted_ores", fallback=True)
+
+    def set_ore_priority(self, names: List[str]) -> None:
+        self._set_setting("ore_priority", "\n".join(names))
+
+    def set_allow_unlisted_ores(self, value: bool) -> None:
+        self._set_setting("allow_unlisted_ores", str(value))
+
+    def get_auto_navigation(self) -> bool:
+        return self.config.getboolean("SETTINGS", "auto_navigation", fallback=True)
 
     def get_home_bookmark_name(self) -> str:
         return self.config.get(
@@ -140,7 +158,7 @@ class ConfigHandler:
         self._set_position("mining_coo", value)
 
     def save(self) -> None:
-        with open(self.config_path, "w") as configfile:
+        with open(self.config_path, "w", encoding="utf-8") as configfile:
             self.config.write(configfile)
 
     def _get_boolean_setting(self, key: str, fallback: bool) -> bool:

@@ -1,89 +1,103 @@
-"""Exercise GUI worker functions without constructing Tk or issuing real input."""
-
-import ast
-from pathlib import Path
+"""Controller tests never create Tk windows or send game input."""
 from unittest.mock import Mock
 
+import pytest
+
+from Bot import bot
 from Bot import sanderling as sm
+from Bot.config import ConfigHandler
 
 
-def worker(monkeypatch):
-    tree = ast.parse(Path("Bot/bot.py").read_text())
-    function = next(
-        item
-        for item in tree.body
-        if isinstance(item, ast.FunctionDef) and item.name == "repeat_function"
+@pytest.fixture
+def setup(tmp_path, monkeypatch):
+    path = tmp_path / "config.properties"
+    path.write_text(
+        "[SETTINGS]\nautomation_mode=sanderling\nauto_navigation=False\nmining_runs=1\nmining_hold=5000\nmining_yield=3\n[POSITIONS]\nclear_cargo_coo=70,80\nmouse_reset_coo=50,60\n"
     )
+    config = ConfigHandler(path)
     session = Mock()
     session.undock.return_value = (10, 20)
     session.bookmark.return_value = (30, 40)
-    config = Mock()
-    config.get_mining_runs.return_value = 1
-    config.get_mouse_reset_coo.return_value = (50, 60)
-    config.get_clear_cargo_coo.return_value = (70, 80)
-    root = Mock()
-    root.after.side_effect = lambda delay, callback, *args: callback(*args)
-    namespace = {
-        "sm": sm,
-        "tk": Mock(),
-        "config": config,
-        "root": root,
-        "logger": Mock(),
-        "fe": Mock(),
-        "create_memory_session": lambda: session,
-        "activate_eve_window": Mock(),
-        "enable_fields": Mock(),
-        "panic_button": Mock(),
-        "update_mining_runs": Mock(),
-        "run_active": True,
-        "stop_flag": False,
-        "panic_requested": False,
-        "SMALL_SLEEP": 12,
-        "LONG_SLEEP": 100,
-        "warping_time": 70,
-        "auto_reset_miners": False,
-        "take_screenshots": False,
-    }
-    exec(
-        compile(ast.Module(body=[function], type_ignores=[]), "Bot/bot.py", "exec"),
-        namespace,
-    )
-    return namespace, session
+    monkeypatch.setattr(bot, "make_session", lambda config, window: session)
+    actions = Mock()
+    monkeypatch.setattr(bot, "fe", actions)
+    events = []
+    controller = bot.Controller(lambda key, value: events.append((key, value)))
+    controller.busy = True
+    return config, session, actions, controller, events
 
 
-def test_insufficient_targets_return_home_and_restore_controls(monkeypatch):
-    state, session = worker(monkeypatch)
-    state["fe"].mining_behaviour.side_effect = sm.MiningTargetsUnavailable("empty belt")
-    state["repeat_function"](1000)
-    session.bookmark.assert_any_call(home=True)
-    state["fe"].auto_dock_to_station.assert_called_once_with([30, 40])
-    state["fe"].clear_cargo.assert_called_once_with(x=70, y=80)
-    state["enable_fields"].assert_called_once()
-    assert not state["run_active"]
+def test_insufficient_targets_return_home(setup):
+    config, session, actions, controller, events = setup
+    actions.mining_behaviour.side_effect = sm.MiningTargetsUnavailable("empty belt")
+    controller.run(config)
+    actions.auto_dock_to_station.assert_called_once_with([30, 40])
+    actions.clear_cargo.assert_called_once_with(70, 80)
+    assert not controller.busy
+    assert events[-1] == ("done", "")
 
 
-def test_preflight_failure_performs_no_input(monkeypatch):
-    state, session = worker(monkeypatch)
+def test_preflight_failure_performs_no_input(setup):
+    config, session, actions, controller, events = setup
     session.validate.side_effect = sm.UIElementError("missing home")
-    state["repeat_function"](1000)
-    assert not state["fe"].mock_calls
-    state["enable_fields"].assert_called_once()
-    assert not state["run_active"]
+    controller.run(config)
+    assert not actions.mock_calls
+    assert not controller.busy
+    assert ("error", "missing home") in events
 
 
-def test_failed_docking_does_not_drag_cargo(monkeypatch):
-    state, session = worker(monkeypatch)
+def test_failed_docking_does_not_unload(setup):
+    config, session, actions, controller, events = setup
     session.undock.side_effect = [(10, 20), sm.UIElementError("not docked")]
-    state["repeat_function"](1000)
-    state["fe"].clear_cargo.assert_not_called()
-    state["enable_fields"].assert_called_once()
+    controller.run(config)
+    actions.clear_cargo.assert_not_called()
+    assert not controller.busy
 
 
-def test_panic_during_undock_skips_mining_and_returns_home(monkeypatch):
-    state, session = worker(monkeypatch)
-    state["fe"].undock.side_effect = lambda **kwargs: state.update(panic_requested=True)
-    state["repeat_function"](1000)
-    state["fe"].mining_behaviour.assert_not_called()
-    state["fe"].click_top_left_circle_menu.assert_not_called()
-    state["fe"].auto_dock_to_station.assert_called_once()
-    session.bookmark.assert_called_once_with(home=True)
+def test_panic_during_undock_skips_mining(setup):
+    config, session, actions, controller, events = setup
+    actions.undock.side_effect = lambda *args: controller.panic()
+    controller.run(config)
+    actions.mining_behaviour.assert_not_called()
+    actions.click_top_left_circle_menu.assert_not_called()
+    actions.auto_dock_to_station.assert_called_once()
+
+
+def test_automatic_mode_needs_no_bookmarks_and_keeps_home_in_memory(setup, monkeypatch):
+    config, session, actions, controller, events = setup
+    config.config.set("SETTINGS", "auto_navigation", "True")
+    navigation = Mock(home_station="Starting Station", last_belt="Belt 1")
+    monkeypatch.setattr(bot.nav, "AutoNavigation", Mock(return_value=navigation))
+    controller.run(config)
+    session.validate.assert_called_once_with(require_bookmarks=False)
+    navigation.prepare_docked.assert_called_once()
+    navigation.travel.assert_called_once()
+    navigation.dock.assert_called_once()
+    session.bookmark.assert_not_called()
+    assert ("home", "Starting Station") in events
+    assert not config.config.has_option("SETTINGS", "home_station")
+
+
+def test_automatic_error_attempts_home_without_unloading(setup, monkeypatch):
+    config, session, actions, controller, events = setup
+    config.config.set("SETTINGS", "auto_navigation", "True")
+    navigation = Mock(home_station="Home")
+    navigation.travel.side_effect = sm.UIElementError("menu missing")
+    monkeypatch.setattr(bot.nav, "AutoNavigation", Mock(return_value=navigation))
+    controller.run(config)
+    navigation.dock.assert_called_once()
+    actions.clear_cargo.assert_not_called()
+
+
+def test_settings_validate_before_start(setup):
+    config, session, actions, controller, events = setup
+    config.config.set("SETTINGS", "mining_yield", "0")
+    with pytest.raises(ValueError, match="yield"):
+        bot.validate_config(config)
+
+
+def test_empty_whitelist_rejected(setup):
+    config, session, actions, controller, events = setup
+    config.config.set("SETTINGS", "allow_unlisted_ores", "False")
+    with pytest.raises(ValueError, match="priority"):
+        bot.validate_config(config)

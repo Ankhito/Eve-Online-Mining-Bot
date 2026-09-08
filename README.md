@@ -5,62 +5,88 @@ The Mining Bot Alpha Owl-Edition is a Python program developed to automate minin
 [![Video auf YouTube](https://img.youtube.com/vi/-qzjmKXXsqU/maxresdefault.jpg)](https://www.youtube.com/watch?v=-qzjmKXXsqU)
 [youtube link]
 
-## Sanderling mode (default)
+## Flight deck UI and automatic navigation
 
-This fork incorporates upstream `sanderling` through `02ac17b` (May 28, 2024),
-with fixes for distance parsing, named bookmarks, fresh UI snapshots, and error handling.
-Use **Windows and Python 3.10 or newer** for this mode. The bundled
-`read-memory-64-bit.exe` comes unchanged from upstream; compatibility with the
-current EVE client still requires an in-game check.
+Run `python main.py` with Windows and Python 3.10 or newer. The app opens a resizable
+flight deck with four tabs: **Flight deck**, **Ore priorities**, **Ship & timing**,
+and **Advanced**. Configuration is saved to `config.properties`.
 
-Before clicking Start:
+1. Start docked at the station where you want to unload. Select your EVE client.
+2. Use **Check EVE** for a read-only connection check. Expand the EVE location panel.
+3. In **Ship & timing**, set mining hold, total laser yield, laser range and cycle time.
+4. In **Advanced**, calibrate cargo unloading and mouse-reset coordinates with
+   **Capture in 3 s**. These two positions are still required.
+5. Set your ore preferences, then click **Start session**.
 
-1. Dock your ship, use the English EVE UI, and select its window in the bot.
-2. Keep your bookmark list open. Name the station bookmark `Home` and your mining
-   bookmarks `Mining 1`, `Mining 2`, etc., or change the names below. Keep these
-   entries visible and give them unique names. The home bookmark must be a dockable station.
-3. Set `mining_range_m` to your fitted lasers' actual range. Configure the overview
-   to show asteroid names and distance. The default name filter matches English
-   `Asteroid ...` labels; adjust it to your visible labels if necessary. This is
-   label filtering, not verification of EVE object type IDs.
-4. Still configure cargo unloading and mouse-reset coordinates, mining hold/yield,
-   laser reset time, hardener keys and warp time. The legacy undock/target/bookmark
-   coordinate fields are ignored during normal Sanderling runs.
+Automatic navigation records the current station name **in memory for this run**.
+It undocks, selects an asteroid belt from the current system's menu, explicitly
+warps to zero, and waits for the selected belt to appear in the location panel.
+On return, it selects **Stations / Structures ? remembered station ? Dock** and
+checks the station identity before unloading. Starting a later session from another
+station makes that station home. No station or asteroid bookmarks are created or
+required in this mode.
+
+The bot checks up to three belts for at least two suitable asteroids in range. It
+returns home if none qualify. It never chooses an arbitrary station when it cannot
+identify the remembered one. Navigation waits are bounded; missing menus, unsupported
+UI labels, and failed reads produce an actionable error. A return is attempted after
+an outbound error when the home station is known.
+
+## Ore priorities
+
+Add exact ore names in **Ore priorities** and use **Move up / Move down** to set the
+order, for example:
+
+1. Veldspar-II Grade
+2. Veldspar
+3. Plagioclase
+
+The highest listed ores within laser range are selected first. Distance breaks ties.
+Enable **Mine unlisted ores** to fall back to other ores; disable it for a strict
+allowlist. **Read visible ores** fills the selector from the current overview without
+moving the ship. The **Name**, **Type**, and **Distance** overview columns should be
+visible. A separate **Size** column is supported and is not interpreted as distance.
+Two eligible asteroids are still required by the existing two-laser routine.
 
 ```ini
 [SETTINGS]
 automation_mode = sanderling
-home_bookmark_name = Home
-mining_bookmark_prefix = Mining
+auto_navigation = True
+ore_priority = Veldspar-II Grade
+    Veldspar
+    Plagioclase
+allow_unlisted_ores = True
 mining_range_m = 15000
 asteroid_name_pattern = ^Asteroid\b
 memory_read_timeout = 120
 ```
 
-The bot reads the selected process only. It locates the undock button, chooses a
-named mining bookmark (avoiding the last one when alternatives exist), and selects
-the two nearest matching overview entries within range. Snapshots refresh before
-bookmark actions and each targeting cycle. Window client coordinates are translated
-to screen coordinates; unusual EVE UI scaling or mixed-monitor DPI still needs live
-validation. Keep the EVE window visible and unobstructed during operation.
+## Controls and limitations
 
-If fewer than two matching asteroids remain, it returns home and ends the run.
-Missing bookmarks or failed memory reads stop the worker and restore controls;
-check the log and take manual control when required. A cached-root failure retries
-once with a full scan. Each reader invocation has the configured timeout, so a retry
-can take twice that time. The first scan may be much slower than subsequent reads.
+**Stop after cycle** completes the current cycle and returns. **Return home** requests
+an early return using the same input worker. The mining wait is interruptible; an
+in-progress input action or memory read finishes first. Closing during a run requests
+a return rather than terminating the worker in space. The UI stays responsive while
+workers report status through a queue.
 
-Panic during a run asks the same worker to recall drones and return to the named
-home bookmark, avoiding two workers issuing competing inputs. It interrupts the
-mining wait but waits for an in-progress memory read, warp wait, or input action.
-The application remains open. Docking is checked before cargo unloading.
+The first memory scan can take around a minute. Each invocation has a configurable
+timeout; a stale cached address is retried once with a full scan. The bundled reader
+is unchanged from upstream Sanderling. Read-only checks have verified station capture
+and asteroid parsing on a live client; full automated undock/warp/dock operation still
+requires an in-game validation run. Keep the client visible and use the English UI.
 
-Cargo fullness remains an estimate from hold capacity and yield; this is not a
-fully state-driven bot. There is no new combat detection or automatic escape logic.
-The old executable's C# source/build project is not included in this repository.
+Cargo fullness remains estimated from capacity and yield. Cargo dragging, drone keys,
+and the two-laser routine retain the original assumptions. There is no combat escape
+system, automatic fit detection, or guarantee for unusual UI scaling. Check the activity
+panel and `client.log` if the app needs attention.
 
-For the original coordinate-only behavior, set `automation_mode = coordinates`.
-That mode retains the original platform limitations and uses the setup below.
+## Legacy modes
+
+Set `auto_navigation = False` to use the previous named-bookmark Sanderling mode.
+Its `home_bookmark_name` and `mining_bookmark_prefix` settings remain supported.
+Set `automation_mode = coordinates` for the original coordinate-only behavior,
+on Windows. The legacy setup below applies to that
+mode. Automatic navigation is the default.
 
 ## Features
 
@@ -68,13 +94,13 @@ That mode retains the original platform limitations and uses the setup below.
 - User-friendly GUI for configuration
 - Easy control of bot start and stop (even a panic button)
 - Display of the current mouse position on the screen
-- Windows Sanderling mode; legacy coordinate mode also supports macOS/Linux without EVE window recognition
+- Windows desktop application with automatic and legacy control modes
 - Can take screenshots of mining progress
 - Logging to console and log file
 
 ## Requirements
 
-To run this bot, you must install python first! You can find several Tutorials on youtube.com. The best is to instal python from their official website, both for macos and windows.
+Install Python 3.10 or newer for Windows, then install the dependencies below. Development checks use Python 3.12 in Windows CI.
 
 If Python is working on your machine correctly, you must install the necessary Python modules. Use the following command:
 
@@ -185,12 +211,7 @@ Please ensure that you comply with EVE Online's terms of use and policies. The u
 
 Check that code quality is up to maintainable standards before pushing to main (!) or branch. A pro tip is always pushing to a new branch and making a PR to make sure code quality is good before its merged into main.
 
-### on macos or linux
-```
-sh check.sh
-```
-
-### on windows:
+### Windows checks
 ```
 ./check.bat
 ```
