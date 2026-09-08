@@ -93,7 +93,9 @@ def menu_groups(snapshot: sm.Node) -> list[list[MenuItem]]:
                     )
             if entries:
                 groups.append(sorted(entries, key=lambda item: item.position[1]))
-    return groups
+    # The location menu opens at the left edge; its cascade extends rightward.
+    # Layer children may be in z-order rather than parent-to-child order.
+    return sorted(groups, key=lambda group: min(item.position[0] for item in group))
 
 
 def exact_item(items: list[MenuItem], name: str) -> MenuItem:

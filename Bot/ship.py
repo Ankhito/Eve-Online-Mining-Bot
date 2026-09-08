@@ -95,6 +95,8 @@ class Module:
     mining: bool
     hardener: bool
     range_m: float | None
+    cycle_seconds: float | None = None
+    yield_m3: float | None = None
 
 
 def tooltip_module(position: sm.Position, snapshot: sm.Node) -> Module:
@@ -113,13 +115,22 @@ def tooltip_module(position: sm.Position, snapshot: sm.Node) -> Module:
     ranges = []
     for label in [combined]:
         match = re.search(
-            r"(?:optimal range|range|max range)\s*:?\s*([\d.,\s]+)\s*(km|m)\b",
+            r"(?:optimal range|range|max range)\s*:?\s*(?:within\s+)?([\d.,\s]+)\s*(km|m)\b",
             label,
             re.I,
         )
         if match:
             ranges.append(decimal(match[1]) * (1000 if match[2].lower() == "km" else 1))
-    return Module(position, name, mining, hardener, min(ranges) if ranges else None)
+    cycle = re.search(r"([\d.,]+)\s*m³\s*per\s*([\d.,]+)\s*s", combined, re.I)
+    return Module(
+        position,
+        name,
+        mining,
+        hardener,
+        min(ranges) if ranges else None,
+        decimal(cycle[2]) if cycle else None,
+        decimal(cycle[1]) if cycle else None,
+    )
 
 
 def module_node(snapshot: sm.Node, module: Module) -> sm.Node:

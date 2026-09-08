@@ -70,6 +70,21 @@ def test_menu_parser_scopes_to_menu_layer_and_handles_null_children():
     assert [item.name for item in nav.menu_groups(snapshot)[0]] == ["Stations"]
 
 
+def test_location_menu_cascade_is_independent_of_layer_z_order():
+    menus = [
+        node(
+            "Menu", children=[node("MenuEntryView", x=x, children=[node(value=label)])]
+        )
+        for x, label in [(500, "Dock"), (300, "Station"), (100, "Stations")]
+    ]
+    snapshot = node(_name="l_menu", children=menus)
+    assert [g[0].name for g in nav.menu_groups(snapshot)] == [
+        "Stations",
+        "Station",
+        "Dock",
+    ]
+
+
 @pytest.fixture
 def navigation():
     session = Mock()

@@ -44,6 +44,22 @@ def test_mining_tooltip_range_and_identity():
     assert module.range_m == 15000
 
 
+def test_live_gaussian_mining_laser_tooltip():
+    tip = node(
+        "ModuleButtonTooltip",
+        children=[
+            node(value="EP-S Gaussian Scoped Mining Laser"),
+            node(value="Optimal range Within 16 km"),
+            node(value="39 m³ per 15s (2,6 m³/s)"),
+        ],
+    )
+    module = ship.tooltip_module((1, 2), tip)
+    assert module.mining
+    assert module.range_m == 16000
+    assert module.cycle_seconds == 15
+    assert module.yield_m3 == 39
+
+
 def test_full_hold_returns_without_sending_mining_input():
     navigation = Mock()
     navigation.session.read.return_value = hold("4.900,0/5.000,0 m³")
