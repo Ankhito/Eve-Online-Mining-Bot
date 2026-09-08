@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import ctypes
 import math
 import threading
 import time
@@ -18,6 +19,51 @@ from Bot import sanderling as sm
 from Bot.config import ConfigHandler
 
 EventSink = Callable[[str, str], None]
+
+
+def _is_foreground_window(hwnd: int) -> bool:
+    return bool(ctypes.windll.user32.GetForegroundWindow() == hwnd)
+
+
+def _force_foreground_window(hwnd: int) -> None:
+    """Activate a Windows window even when SetForegroundWindow is restricted."""
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    if not user32.IsWindow(hwnd):
+        raise RuntimeError("The selected EVE window is no longer available")
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+
+    current_thread = kernel32.GetCurrentThreadId()
+    target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+    foreground = user32.GetForegroundWindow()
+    foreground_thread = (
+        user32.GetWindowThreadProcessId(foreground, None) if foreground else 0
+    )
+    attached_target = bool(
+        target_thread
+        and target_thread != current_thread
+        and user32.AttachThreadInput(current_thread, target_thread, True)
+    )
+    attached_foreground = bool(
+        foreground_thread
+        and foreground_thread not in (current_thread, target_thread)
+        and user32.AttachThreadInput(current_thread, foreground_thread, True)
+    )
+    try:
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+        user32.SetActiveWindow(hwnd)
+        user32.SetFocus(hwnd)
+    finally:
+        if attached_foreground:
+            user32.AttachThreadInput(current_thread, foreground_thread, False)
+        if attached_target:
+            user32.AttachThreadInput(current_thread, target_thread, False)
+    if not _is_foreground_window(hwnd):
+        raise RuntimeError(
+            "Windows would not focus EVE. Click the EVE client once, then press Start again."
+        )
 
 
 def validate_config(config: ConfigHandler) -> None:
@@ -99,7 +145,15 @@ class Controller:
 
     def activate(self) -> None:
         if self.window is not None:
-            self.window.activate()
+            hwnd = int(self.window._hWnd)
+            try:
+                self.window.activate()
+            except Exception as error:
+                # PyGetWindow can raise with Windows error code 0 even when the
+                # requested window was successfully activated.
+                logger.debug("PyGetWindow activation fallback: {}", error)
+            if not _is_foreground_window(hwnd):
+                _force_foreground_window(hwnd)
 
     def start(self, config: ConfigHandler, window: Any) -> None:
         validate_config(config)
