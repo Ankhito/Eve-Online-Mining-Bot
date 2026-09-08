@@ -1,16 +1,9 @@
-"""Widget regression checks run in Linux CI's virtual display, without game input."""
+"""Windows widget regression checks, without game input."""
 
-import os
-import sys
 
 import pytest
 
 from Bot.ui import Application
-
-pytestmark = pytest.mark.skipif(
-    sys.platform == "win32" or not os.environ.get("DISPLAY"),
-    reason="Widget checks use the CI virtual display",
-)
 
 
 @pytest.fixture

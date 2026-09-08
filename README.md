@@ -85,7 +85,7 @@ panel and `client.log` if the app needs attention.
 Set `auto_navigation = False` to use the previous named-bookmark Sanderling mode.
 Its `home_bookmark_name` and `mining_bookmark_prefix` settings remain supported.
 Set `automation_mode = coordinates` for the original coordinate-only behavior,
-including its original platform limitations. The legacy setup below applies to that
+on Windows. The legacy setup below applies to that
 mode. Automatic navigation is the default.
 
 ## Features
@@ -94,13 +94,13 @@ mode. Automatic navigation is the default.
 - User-friendly GUI for configuration
 - Easy control of bot start and stop (even a panic button)
 - Display of the current mouse position on the screen
-- Windows Sanderling mode; legacy coordinate mode also supports macOS/Linux without EVE window recognition
+- Windows desktop application with automatic and legacy control modes
 - Can take screenshots of mining progress
 - Logging to console and log file
 
 ## Requirements
 
-To run this bot, you must install python first! You can find several Tutorials on youtube.com. The best is to instal python from their official website, both for macos and windows.
+Install Python 3.10 or newer for Windows, then install the dependencies below. Development checks use Python 3.12 in Windows CI.
 
 If Python is working on your machine correctly, you must install the necessary Python modules. Use the following command:
 
@@ -211,12 +211,7 @@ Please ensure that you comply with EVE Online's terms of use and policies. The u
 
 Check that code quality is up to maintainable standards before pushing to main (!) or branch. A pro tip is always pushing to a new branch and making a PR to make sure code quality is good before its merged into main.
 
-### on macos or linux
-```
-sh check.sh
-```
-
-### on windows:
+### Windows checks
 ```
 ./check.bat
 ```

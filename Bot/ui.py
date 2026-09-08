@@ -32,6 +32,8 @@ ACCENT = "#56dbc5"
 
 class Application(tk.Tk):
     def __init__(self, config_path: str = "config.properties"):
+        if platform.system() != "Windows":
+            raise OSError("EVE Mining supports Windows only")
         super().__init__()
         self.title("EVE Mining | Flight deck")
         self.geometry("1040x820")
@@ -532,12 +534,9 @@ class Application(tk.Tk):
 
     def refresh_windows(self) -> None:
         previous = self.window_var.get()
-        if platform.system() == "Windows":
-            import pygetwindow as gw  # type: ignore
+        import pygetwindow as gw  # type: ignore
 
-            self.windows = list(gw.getWindowsWithTitle("EVE -"))
-        else:
-            self.windows = []
+        self.windows = list(gw.getWindowsWithTitle("EVE -"))
         labels = [f"{window.title}  [{window._hWnd}]" for window in self.windows]
         self.window_picker.configure(values=labels)
         self.window_var.set(
